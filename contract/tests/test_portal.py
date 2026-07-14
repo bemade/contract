@@ -82,3 +82,58 @@ class TestContractLinePortal(BaseCommon):
             ContractLine.browse(self.contract_other.contract_line_ids.ids).read(
                 ["name"]
             )
+
+
+class TestContractModificationPortal(BaseCommon):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner_portal = cls.env["res.partner"].create({"name": "Portal partner"})
+        cls.partner_other = cls.env["res.partner"].create({"name": "Other partner"})
+        cls.user_portal = cls._create_new_portal_user(
+            partner_id=cls.partner_portal.id, login="portal_contract_modification"
+        )
+        # A "Contract start" modification is created automatically on each
+        # contract, and the contract partner is subscribed as follower.
+        cls.contract_portal = cls.env["contract.contract"].create(
+            {"name": "Own contract", "partner_id": cls.partner_portal.id}
+        )
+        cls.contract_other = cls.env["contract.contract"].create(
+            {"name": "Other contract", "partner_id": cls.partner_other.id}
+        )
+
+    def test_contract_modification_portal_rule(self):
+        """Portal users must only read modifications of their own contracts."""
+        self.assertTrue(self.contract_portal.modification_ids)
+        self.assertTrue(self.contract_other.modification_ids)
+        Modification = self.env["contract.modification"].with_user(self.user_portal)
+        modifications = Modification.search([])
+        self.assertEqual(modifications, self.contract_portal.modification_ids)
+        # Reading a modification of someone else's contract must be forbidden
+        with self.assertRaises(AccessError):
+            Modification.browse(self.contract_other.modification_ids.ids).read(
+                ["description"]
+            )
+
+    def test_contract_modification_multi_company_rule(self):
+        """Users must only see modifications of contracts of their companies."""
+        company_2 = self.env["res.company"].create({"name": "Company 2"})
+        contract_company_2 = self.env["contract.contract"].create(
+            {
+                "name": "Company 2 contract",
+                "partner_id": self.partner_other.id,
+                "company_id": company_2.id,
+            }
+        )
+        self.assertTrue(contract_company_2.modification_ids)
+        user = self._create_new_internal_user(
+            login="internal_contract_modification",
+            groups="base.group_user,account.group_account_invoice",
+        )
+        Modification = self.env["contract.modification"].with_user(user)
+        modifications = Modification.search([])
+        self.assertFalse(modifications & contract_company_2.modification_ids)
+        with self.assertRaises(AccessError):
+            Modification.browse(contract_company_2.modification_ids.ids).read(
+                ["description"]
+            )
